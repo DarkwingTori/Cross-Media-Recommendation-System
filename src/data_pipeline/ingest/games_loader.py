@@ -34,11 +34,12 @@ class GamesLoader:
 
     def load_games(self) -> pd.DataFrame:
         """
-        Load games.csv from steam-games directory.
+        Load games.csv with full metadata including genres.
 
         Returns:
-            DataFrame with columns: AppID, Name, Genres, Tags, Price, etc.
+            DataFrame with columns: game_id, title, Genres, Tags, etc.
         """
+        # Load from steam-games (has Genres and Tags)
         filepath = self.data_dir / "steam-games" / "games.csv"
         logger.info(f"Loading games from {filepath}")
 
@@ -50,9 +51,11 @@ class GamesLoader:
             if 'AppID' in games_df.columns:
                 games_df = games_df.rename(columns={'AppID': 'game_id'})
 
-            # Rename Name to title for consistency
+            # Normalize column names
             if 'Name' in games_df.columns:
                 games_df = games_df.rename(columns={'Name': 'title'})
+            if 'Genres' in games_df.columns:
+                games_df = games_df.rename(columns={'Genres': 'genres'})
 
             # Extract year from Release date
             if 'Release date' in games_df.columns:
@@ -159,7 +162,7 @@ class GamesLoader:
 
     def load_all(self, load_ratings_chunksize: Optional[int] = 1_000_000) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        Load all game files.
+        Load all game files and match games with ratings.
 
         Args:
             load_ratings_chunksize: Chunksize for loading recommendations
@@ -172,6 +175,24 @@ class GamesLoader:
         games_df = self.load_games()
         ratings_df = self.load_ratings(chunksize=load_ratings_chunksize)
         users_df = self.load_users()
+
+        # Filter to games that have both metadata and ratings
+        games_with_metadata = set(games_df['game_id'].unique())
+        games_with_ratings = set(ratings_df['game_id'].unique())
+        valid_games = games_with_metadata & games_with_ratings
+
+        logger.info(f"Game ID matching:")
+        logger.info(f"  Games with metadata: {len(games_with_metadata):,}")
+        logger.info(f"  Games with ratings: {len(games_with_ratings):,}")
+        logger.info(f"  Games with both: {len(valid_games):,}")
+
+        # Filter both dataframes
+        games_df = games_df[games_df['game_id'].isin(valid_games)]
+        ratings_df = ratings_df[ratings_df['game_id'].isin(valid_games)]
+
+        logger.info(f"After filtering:")
+        logger.info(f"  Games: {len(games_df):,}")
+        logger.info(f"  Ratings: {len(ratings_df):,}")
 
         logger.info("All game files loaded successfully")
 

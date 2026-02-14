@@ -16,6 +16,9 @@ sys.path.append(str(project_root / "src"))
 
 from models.collaborative.item_based_cf import ItemBasedCF
 from evaluation.evaluator import ModelEvaluator
+from data_pipeline.transform.embedding_generator import EmbeddingGenerator
+from models.cross_domain.domain_bridge import DomainBridge
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 # Set up logging
 logging.basicConfig(
@@ -129,10 +132,149 @@ def train_movie_cf(
     return results
 
 
+def train_cross_domain_bridges(
+    k_similar: int = 50,
+    max_features: int = 500
+) -> dict:
+    """
+    Train cross-domain bridge matrices for all media type pairs.
+
+    Args:
+        k_similar: Number of similar items to keep per source item
+        max_features: Maximum TF-IDF features
+
+    Returns:
+        Dictionary with bridge statistics
+    """
+    logger.info("\n" + "=" * 80)
+    logger.info("Training Cross-Domain Bridges")
+    logger.info("=" * 80)
+
+    # Paths
+    data_dir = project_root / "data" / "processed"
+    mappings_dir = project_root / "data" / "mappings"
+    model_dir = project_root / "data" / "models"
+
+    mappings_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load all processed items
+    logger.info("\n[Step 1/3] Loading processed items...")
+    items = {}
+    for media_type in ['movie', 'anime', 'manga']:
+        items_path = data_dir / f"{media_type}_items.parquet"
+        if items_path.exists():
+            items[media_type] = pd.read_parquet(items_path)
+            logger.info(f"  {media_type}: {len(items[media_type]):,} items")
+        else:
+            logger.warning(f"  {media_type}: not found, skipping")
+
+    if len(items) < 2:
+        logger.error("Need at least 2 media types to build bridges")
+        return {}
+
+    # Generate embeddings for each media type
+    logger.info("\n[Step 2/3] Generating TF-IDF embeddings...")
+
+    # CRITICAL: Fit vectorizer on ALL media types combined to create shared vocabulary
+    logger.info("Fitting vectorizer on combined corpus...")
+    all_items = pd.concat([items_df for items_df in items.values()], ignore_index=True)
+
+    generator = EmbeddingGenerator(max_features=max_features)
+
+    # Fit on all items to create shared vocabulary
+    all_items['text'] = all_items.apply(generator._create_text_representation, axis=1)
+    generator.vectorizer = generator.vectorizer or TfidfVectorizer(
+        max_features=max_features,
+        ngram_range=generator.ngram_range,
+        min_df=generator.min_df,
+        lowercase=True
+    )
+    generator.vectorizer.fit(all_items['text'])
+    logger.info(f"Shared vocabulary: {len(generator.vectorizer.vocabulary_):,} features")
+
+    # Now transform each media type using the shared vocabulary
+    embeddings = {}
+
+    for media_type, items_df in items.items():
+        logger.info(f"\nGenerating embeddings for {media_type}...")
+        emb, item_to_idx, idx_to_item = generator.generate_embeddings(
+            items_df,
+            media_type,
+            fit_new=False  # Use the shared vocabulary we just fitted
+        )
+
+        embeddings[media_type] = {
+            'embeddings': emb,
+            'item_to_idx': item_to_idx,
+            'idx_to_item': idx_to_item
+        }
+
+        # Save embeddings
+        emb_path = mappings_dir / f"{media_type}_embeddings.pkl"
+        generator.save_embeddings(emb, item_to_idx, idx_to_item, str(emb_path))
+
+    # Build bridges from movie to other media types
+    logger.info("\n[Step 3/3] Building cross-domain bridges...")
+    bridges_built = {}
+
+    source_media = 'movie'
+    if source_media not in embeddings:
+        logger.error("Movie embeddings required as source")
+        return {}
+
+    for target_media in ['anime', 'manga']:
+        if target_media not in embeddings:
+            logger.warning(f"Skipping {source_media}→{target_media} (target not available)")
+            continue
+
+        logger.info(f"\nBuilding bridge: {source_media} → {target_media}")
+
+        bridge = DomainBridge(
+            source_embeddings=embeddings[source_media]['embeddings'],
+            target_embeddings=embeddings[target_media]['embeddings'],
+            source_items=items[source_media],
+            target_items=items[target_media],
+            source_media=source_media,
+            target_media=target_media,
+            k_similar=k_similar
+        )
+
+        bridge.build_bridge_matrix()
+
+        # Save bridge
+        bridge_path = model_dir / f"bridge_{source_media}_to_{target_media}.npz"
+        bridge.save_bridge(str(bridge_path))
+
+        # Store stats
+        bridges_built[f"{source_media}→{target_media}"] = bridge.get_bridge_stats()
+
+        logger.info(f"Bridge {source_media}→{target_media} complete:")
+        logger.info(f"  {bridge}")
+
+    logger.info("\n" + "=" * 80)
+    logger.info("Cross-Domain Bridges Training Complete!")
+    logger.info("=" * 80)
+    logger.info(f"\nBridges built: {len(bridges_built)}")
+    for key in bridges_built.keys():
+        logger.info(f"  ✅ {key}")
+    logger.info("=" * 80 + "\n")
+
+    return bridges_built
+
+
 def main():
     """Main function with CLI interface."""
     parser = argparse.ArgumentParser(
-        description="Train collaborative filtering model for movie recommendations"
+        description="Train collaborative filtering and cross-domain models"
+    )
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=['collaborative', 'cross-domain', 'both'],
+        default='collaborative',
+        help="Training mode (default: collaborative)"
     )
 
     parser.add_argument(
@@ -175,24 +317,51 @@ def main():
         logger.info("Quick mode enabled: sampling 1000 users")
         args.sample_users = 1000
 
-    # Train model
+    # Train based on mode
     try:
-        results = train_movie_cf(
-            k_neighbors=args.k_neighbors,
-            test_size=args.test_size,
-            sample_users=args.sample_users,
-            save_model=not args.no_save
-        )
+        if args.mode == 'collaborative':
+            results = train_movie_cf(
+                k_neighbors=args.k_neighbors,
+                test_size=args.test_size,
+                sample_users=args.sample_users,
+                save_model=not args.no_save
+            )
 
-        # Success criteria check
-        precision_10 = results.get('precision@10', 0)
-        if precision_10 >= 0.30:
-            print("\n✅ SUCCESS: Model meets performance criteria (Precision@10 >= 0.30)")
-            return 0
-        else:
-            print(f"\n⚠️  WARNING: Model below target (Precision@10 = {precision_10:.4f}, target >= 0.30)")
-            print("Consider adjusting hyperparameters or increasing data quality")
-            return 0  # Still return success, just a warning
+            # Success criteria check
+            precision_10 = results.get('precision@10', 0)
+            if precision_10 >= 0.30:
+                print("\n✅ SUCCESS: Model meets performance criteria (Precision@10 >= 0.30)")
+            else:
+                print(f"\n⚠️  WARNING: Model below target (Precision@10 = {precision_10:.4f}, target >= 0.30)")
+
+        elif args.mode == 'cross-domain':
+            results = train_cross_domain_bridges(
+                k_similar=args.k_neighbors,
+                max_features=500
+            )
+            print(f"\n✅ Cross-domain bridges trained successfully!")
+            print(f"Bridges built: {len(results)}")
+
+        elif args.mode == 'both':
+            # Train collaborative filtering first
+            logger.info("Training collaborative filtering...")
+            train_movie_cf(
+                k_neighbors=args.k_neighbors,
+                test_size=args.test_size,
+                sample_users=args.sample_users,
+                save_model=not args.no_save
+            )
+
+            # Then train cross-domain bridges
+            logger.info("\nTraining cross-domain bridges...")
+            train_cross_domain_bridges(
+                k_similar=args.k_neighbors,
+                max_features=500
+            )
+
+            print("\n✅ All models trained successfully!")
+
+        return 0
 
     except FileNotFoundError as e:
         logger.error(f"Data not found: {e}")

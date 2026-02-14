@@ -49,9 +49,11 @@ class MangaLoader:
             if 'manga_id' not in manga_df.columns:
                 manga_df['manga_id'] = range(1, len(manga_df) + 1)
 
-            # Rename Title to title for consistency
+            # Normalize column names
             if 'Title' in manga_df.columns:
                 manga_df = manga_df.rename(columns={'Title': 'title'})
+            if 'Genres' in manga_df.columns:
+                manga_df = manga_df.rename(columns={'Genres': 'genres'})
 
             # Extract year from Published column
             if 'Published' in manga_df.columns:

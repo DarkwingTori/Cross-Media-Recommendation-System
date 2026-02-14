@@ -49,6 +49,10 @@ class AnimeLoader:
             if 'anime_id' not in anime_df.columns and 'mal_id' in anime_df.columns:
                 anime_df = anime_df.rename(columns={'mal_id': 'anime_id'})
 
+            # Normalize column names
+            if 'genre' in anime_df.columns and 'genres' not in anime_df.columns:
+                anime_df = anime_df.rename(columns={'genre': 'genres'})
+
             # Extract year from aired column if available
             if 'aired' in anime_df.columns:
                 anime_df['year'] = anime_df['aired'].apply(self._extract_year)
