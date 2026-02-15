@@ -54,6 +54,15 @@ class MangaLoader:
                 manga_df = manga_df.rename(columns={'Title': 'title'})
             if 'Genres' in manga_df.columns:
                 manga_df = manga_df.rename(columns={'Genres': 'genres'})
+                # Parse string representation of list and convert to pipe-separated format
+                manga_df['genres'] = manga_df['genres'].apply(
+                    lambda x: self._parse_and_format_genres(x)
+                )
+                logger.info(f"Parsed genres for {(manga_df['genres'] != '').sum():,} manga")
+
+            # Parse Themes column (keep as string for now, will be processed later)
+            if 'Themes' in manga_df.columns:
+                manga_df['themes_raw'] = manga_df['Themes'].apply(self._parse_list_string)
 
             # Extract year from Published column
             if 'Published' in manga_df.columns:
@@ -234,6 +243,67 @@ class MangaLoader:
             pass
 
         return None
+
+    @staticmethod
+    def _parse_list_string(list_str) -> list:
+        """
+        Parse string representation of Python list to actual list.
+
+        Args:
+            list_str: String like "['Action', 'Fantasy']" or actual list
+
+        Returns:
+            Python list (empty if parsing fails)
+        """
+        if pd.isna(list_str) or not list_str:
+            return []
+
+        # Already a list
+        if isinstance(list_str, list):
+            return list_str
+
+        # Try to parse string representation
+        try:
+            parsed = ast.literal_eval(list_str)
+            return parsed if isinstance(parsed, list) else []
+        except (ValueError, SyntaxError, TypeError):
+            return []
+
+    @staticmethod
+    def _parse_and_format_genres(genre_str) -> str:
+        """
+        Parse genre string and convert to pipe-separated format.
+
+        Args:
+            genre_str: String like "['Action', 'Fantasy']"
+
+        Returns:
+            Pipe-separated string like "Action|Fantasy"
+        """
+        if pd.isna(genre_str) or not genre_str:
+            return ''
+
+        # Already a regular string (pipe-separated)
+        if isinstance(genre_str, str) and '|' in genre_str:
+            return genre_str
+
+        # Parse list representation
+        try:
+            if isinstance(genre_str, str):
+                parsed = ast.literal_eval(genre_str)
+            elif isinstance(genre_str, list):
+                parsed = genre_str
+            else:
+                return ''
+
+            # Convert list to pipe-separated string
+            if isinstance(parsed, list):
+                return '|'.join(str(g) for g in parsed if g)
+            else:
+                return str(parsed)
+
+        except (ValueError, SyntaxError, TypeError):
+            return ''
 
 
 # Convenience function
