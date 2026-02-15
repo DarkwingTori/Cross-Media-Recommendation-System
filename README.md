@@ -1,10 +1,10 @@
 # Media Recommendation System
 
-A cross-media recommendation engine that suggests anime, manga, and games based on movie preferences using collaborative filtering, cosine similarity, and sparse matrix optimization.
+A cross-media recommendation engine that suggests anime and manga based on movie preferences using collaborative filtering, genre-based bridges, and hybrid algorithms.
 
 ## Overview
 
-This project implements a sophisticated recommendation system that bridges different media types (movies, anime, manga, games) to provide personalized content discovery. The system leverages:
+This project implements a sophisticated recommendation system that bridges different media types (movies, anime, manga) to provide personalized content discovery across **56,439 items** and **78+ million ratings**. The system leverages:
 
 - **Collaborative Filtering**: Item-based CF with cosine similarity on sparse matrices
 - **Cross-Domain Transfer**: Genre-based bridge architecture for multi-media recommendations
@@ -22,9 +22,10 @@ This project implements a sophisticated recommendation system that bridges diffe
 ### Key Innovation
 
 Uses genre/theme embeddings as a "bridge" between media types, enabling preference transfer:
-- Movies → Anime recommendations
-- Movies → Manga recommendations
-- Movies → Game recommendations
+- **Movies → Anime** recommendations (14,478 anime)
+- **Movies → Manga** recommendations (10,000 manga)
+- **Cold Start Support** for users with < 10 ratings
+- **Hybrid Algorithm** combining CF + content + cross-domain signals
 
 ## Project Structure
 
@@ -67,61 +68,71 @@ pip install -r requirements.txt
 
 ### 3. Download Datasets
 
-The MovieLens 32M dataset should already be linked. Download additional datasets from Kaggle:
-
-- **Anime**: [MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist)
-- **Manga**: [Manga & Anime 2024](https://www.kaggle.com/datasets/duongtruongbinh/manga-and-anime-dataset)
-- **Games**: [Steam Games Dataset](https://www.kaggle.com/datasets/fronkongames/steam-games-dataset)
-- **Game Ratings**: [Steam Recommendations](https://www.kaggle.com/datasets/antonkozyriev/game-recommendations-on-steam)
-
-Place downloaded datasets in the appropriate `data/raw/` subdirectories.
-
-### 4. Run Data Pipeline
+Set up Kaggle API credentials and download datasets:
 
 ```bash
-python src/data_pipeline/pipeline.py
+# Install Kaggle CLI
+pip install kaggle
+
+# Set API token (get from https://www.kaggle.com/account)
+export KAGGLE_API_TOKEN=your_token_here
+
+# Download all datasets
+python scripts/download_datasets.py
 ```
 
-This processes raw data into unified format.
+**Datasets:**
+- **Movies**: MovieLens 32M (31,961 items, 31.8M ratings)
+- **Anime**: [MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist) (14,478 items, 46.2M ratings)
+- **Manga**: [Manga & Anime 2024](https://www.kaggle.com/datasets/duongtruongbinh/manga-and-anime-dataset) (10,000 items, 177K ratings)
 
-### 5. Train Models
+### 4. Process Data & Train Models
 
 ```bash
-python scripts/train_models.py
+# Process all media types
+python src/data_pipeline/pipeline.py --media all
+
+# Train collaborative filtering
+python scripts/train_models.py --mode collaborative
+
+# Build cross-domain bridges
+python scripts/train_models.py --mode cross-domain
 ```
 
-Trains collaborative filtering models and builds cross-domain bridges.
+### 5. Start the Application
 
-### 6. Start API Server
-
+**Terminal 1 - API Server:**
 ```bash
-uvicorn src.api.endpoints:app --reload
+python scripts/run_api.py
 ```
+API available at `http://localhost:8000` with interactive docs at `/docs`
 
-API will be available at `http://localhost:8000`
-
-### 7. Launch Streamlit UI
-
+**Terminal 2 - Streamlit UI:**
 ```bash
 streamlit run ui/streamlit_app/app.py
 ```
+Web interface available at `http://localhost:8501`
 
 ## Datasets
 
-### MovieLens 32M
-- **Size**: 32 million ratings, 87K movies, 200K users
-- **Location**: `~/Downloads/ml-32m/` (symlinked)
+### Movies - MovieLens 32M
+- **Items**: 31,961 movies (after filtering)
+- **Ratings**: 31.8 million from 200K users
 - **Source**: [MovieLens](https://grouplens.org/datasets/movielens/)
 
-### Anime/Manga (MyAnimeList)
-- **Size**: 300K users, 14K anime, 80M ratings
+### Anime - MyAnimeList
+- **Items**: 14,478 anime
+- **Ratings**: 46.2 million from 300K users
 - **Features**: Genres, themes, studios, scores
-- **Download**: Kaggle (see links above)
+- **Source**: [Kaggle - MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist)
 
-### Games (Steam)
-- **Size**: 110K+ games with metadata
-- **Features**: Genres, tags, categories, reviews
-- **Download**: Kaggle (see links above)
+### Manga - Manga & Anime 2024
+- **Items**: 10,000 manga (7,072 with genres)
+- **Ratings**: 177K synthetic ratings based on scores/popularity
+- **Features**: Genres, themes, demographics, serialization
+- **Source**: [Kaggle - Manga & Anime Dataset](https://www.kaggle.com/datasets/duongtruongbinh/manga-and-anime-dataset)
+
+**Total System:** 56,439 items across 3 media types with 78+ million ratings
 
 ## Algorithms
 
@@ -177,26 +188,51 @@ final_score = 0.5 * CF_score + 0.3 * content_score + 0.2 * cross_domain_score
 - ✅ API response time < 200ms (p95)
 - ✅ Catalog coverage > 60%
 
+## Features
+
+✨ **Core Capabilities:**
+- **Personalized Recommendations**: Item-based CF, content-based, and hybrid algorithms
+- **Cross-Domain Transfer**: Rate movies → get anime/manga recommendations
+- **Cold Start Handling**: Works with just 3-5 ratings (genre-based popularity)
+- **Hybrid System**: Adaptive algorithm (cold start vs warmstart strategies)
+- **Fast API**: < 200ms response time, async FastAPI backend
+- **Web Interface**: Interactive Streamlit UI with search, rating, and recommendations
+
+📊 **By the Numbers:**
+- 56,439 items (31,961 movies + 14,478 anime + 10,000 manga)
+- 78+ million ratings processed
+- 2 cross-domain bridges (1.59M + 1.57M connections)
+- 328-feature shared vocabulary for genre embeddings
+
 ## API Endpoints
 
-### POST /recommend
-Get cross-media recommendations
+**Base URL**: `http://localhost:8000`
+**Interactive Docs**: `http://localhost:8000/docs`
 
-```json
-{
-  "user_ratings": [
-    {"item_id": "mov_123", "rating": 4.5, "media_type": "movie"}
-  ],
-  "target_media": "anime",
-  "top_n": 10
-}
+### POST /recommend
+Get personalized recommendations
+
+```bash
+curl -X POST "http://localhost:8000/recommend" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_ratings": [
+      {"item_id": "mov_2571", "rating": 5.0},
+      {"item_id": "mov_260", "rating": 4.5}
+    ],
+    "target_media": "anime",
+    "top_n": 10
+  }'
 ```
 
 ### GET /items/{item_id}
-Get item details
+Get item details (`mov_1`, `ani_123`, `man_456`)
 
-### GET /items/search
-Search items by query
+### GET /items/search?query=matrix
+Search items by title
+
+### GET /health
+Service health check and statistics
 
 ## Development
 
@@ -220,13 +256,13 @@ black src/ tests/
 
 ## Implementation Phases
 
-- [x] Phase 1: Foundation & Data Pipeline
-- [ ] Phase 2: Within-Domain Models
-- [ ] Phase 3: Cross-Domain Bridge
-- [ ] Phase 4: Hybrid System & Cold Start
-- [ ] Phase 5: API & Backend Service
-- [ ] Phase 6: Streamlit UI
-- [ ] Phase 7: Evaluation & Optimization
+- [x] **Phase 1**: Foundation & Data Pipeline (movies, anime, manga)
+- [x] **Phase 2**: Within-Domain Models (item-based collaborative filtering)
+- [x] **Phase 3**: Cross-Domain Bridge (movie→anime/manga with TF-IDF embeddings)
+- [x] **Phase 4**: Hybrid System & Cold Start (weighted hybrid + adaptive strategy)
+- [x] **Phase 5**: API & Backend Service (FastAPI with 4 endpoints)
+- [x] **Phase 6**: Streamlit UI (web interface with 3 pages)
+- [ ] Phase 7: Evaluation & Optimization (future work)
 
 ## Tech Stack
 
